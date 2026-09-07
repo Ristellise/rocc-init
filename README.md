@@ -13,9 +13,8 @@ It is the ~2% of systemd a container actually needs, without the other 98%:
 | unit files, fifty knobs per unit      | `rocc install pytorch`                    |
 | 30+ MB + libc deps                    | one static binary, stdlib only, no cgo   |
 
-There are **no configuration environment variables**. Keys are discovered
-(by value), hardware is detected (by probing /dev), and anything you want
-installed you ask for explicitly.
+No configuration environment variables: keys are discovered by value,
+hardware by probing /dev, everything else you ask for explicitly.
 
 Boot sequence:
 
@@ -41,16 +40,11 @@ docker run -d --name dev -p 2222:22 \
             exec rocc init'
 ```
 
-(on arm64 hosts use `rocc_linux_arm64`; each release also carries `.sha256`
-checksums, and `releases/latest/download/<name>` always resolves to the
-newest release)
+(arm64: `rocc_linux_arm64`; releases also carry `.sha256` checksums)
 
-- sshd starts because a public key was discovered in `SSH_KEY` (any variable
-  name works)
-- openssh-server is installed automatically if missing — ssh is the one
-  service rocc runs itself
-- `ssh -p 2222 root@localhost` — public key only, no passwords, port 22,
-  root
+- sshd starts because a public key was discovered in `SSH_KEY`
+- openssh-server is installed automatically if missing
+- `ssh -p 2222 root@localhost` — public key only, no passwords
 
 Then, from inside the box (ssh or docker exec):
 
@@ -67,22 +61,18 @@ rocc install apt:htop,curl
 
 ## Running custom containers
 
-rocc works with any image and any start command. Nothing is injected into
-the image — there is no `rocc inject`, no build step, no required base. The
-image stays stock; rocc is fetched (or copied in — see the Dockerfile
-snippet under [Releasing](#releasing)) at container start.
-
-The flip side: rocc cannot be attached to a container that is already
-running. PID 1 is the job — reaping, signals, supervision — so a container
-starts under rocc; it does not adopt rocc later.
+rocc works with any image and any start command. Nothing is injected: no
+build step, no required base — the image stays stock and rocc is fetched
+(or copied in; see the Dockerfile under [Releasing](#releasing)) at start.
+The flip side: rocc has to be the container's first process; it cannot be
+attached to a container that is already running.
 
 ### Flaky start commands (RunPod & friends)
 
 Some platforms mangle the container start command — quotes and spaces get
-eaten, or the field silently resets between restarts. Env vars live in the
-pod spec and survive what command fields don't, so the fix is: carry the
-entire bootstrap in env vars and reduce the start command to a fixed
-incantation with nothing left to mangle.
+eaten, or the field resets between restarts. Env vars survive what command
+fields don't, so carry the whole bootstrap in one and make the start
+command a fixed incantation:
 
 Env vars — one key, one value, each a single line, ready to paste into
 key/value fields:
@@ -98,38 +88,25 @@ Docker command:
 bash -c eval${IFS}$ROCC
 ```
 
-- `KEYS`: any name works — discovery is by value; a path to a key file
-  works too
-- `ROCC`: trim the `apt-get` prefix on images that already ship curl; to run
-  something besides the ssh appliance, append a workload:
-  `... && exec rocc init -- <cmd args...>`
-- `eval${IFS}$ROCC` works because `${IFS}` (the shell's field separator)
-  expands to a space at eval time — the command token needs no quotes and
-  no literal space, so a flaky command parser has nothing to eat. If the
-  platform pre-evaluates the command through a shell, escape both
-  expansions: `bash -c eval\${IFS}\$ROCC`; if it passes commands through
-  verbatim, quotes work too: `bash -c 'eval${IFS}$ROCC'`
-- the `exec` in `ROCC` replaces bash, so rocc ends up as PID 1
-- `ROCC` is read by bash, never by rocc — a launcher convention like
-  `KEYS`, not a rocc setting
+- `KEYS`: any name works; a path to a key file works too
+- `ROCC`: drop the `apt-get` prefix if the image ships curl; append a
+  workload with `... && exec rocc init -- <cmd args...>`
+- `${IFS}` expands to a space at eval time — no quotes, no literal space,
+  nothing for a flaky parser to eat. If a shell evaluates the command
+  first, quote or escape it: `bash -c 'eval${IFS}$ROCC'` or
+  `bash -c eval\${IFS}\$ROCC`
+- the `exec` makes rocc PID 1; `ROCC` is read by bash, never by rocc
 
 ### When the command field behaves
 
 Everything after `init --` is the main process, supervised under PID 1.
 
 - `SIGTERM`/`SIGINT` are forwarded (10s grace, then `SIGKILL`); the
-  container exits with the workload's exit code — no idle appliance after
-  the run finishes
-- `--` separates rocc's arguments from the workload's flags; `rocc init
-  <cmd args...>` without the separator works too
-- installs compose into the start command the same way:
-  `rocc init -- bash -c 'rocc install pytorch && <cmd>'` — nothing runs at
-  boot you didn't ask for, and a failed install fails the run immediately
-  instead of bricking a boot
-- sshd still comes up alongside whenever keys are discovered — ssh in to
-  watch a live run while the workload keeps running
-- with no start command at all, `rocc init` supervises `sleep infinity` —
-  the ssh appliance from the quick start
+  container exits with the workload's exit code
+- installs compose into the start command:
+  `rocc init -- bash -c 'rocc install pytorch && <cmd>'`
+- sshd still runs alongside when keys are discovered; with no start
+  command, `rocc init` supervises `sleep infinity` (the ssh appliance)
 
 ## Releasing
 
@@ -139,8 +116,8 @@ stamps `rocc version` with the tag, and attaches them (plus `.sha256`
 checksums) to the GitHub release:
 
 ```sh
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
 If you prefer baking a minimal image instead of pulling at start:
@@ -167,13 +144,10 @@ Every environment variable's value is checked two ways, under any name:
    -e KEYS=/run/secrets/authorized_keys
    ```
 
-This covers `--env-file` setups, mounted secrets, and orchestrators that
-inject files. Variables that hold *host* keys (`KNOWN_HOSTS`, `*_HOST_KEY`)
-are skipped both ways so host keys never leak into authorized_keys.
+Variables that hold *host* keys (`KNOWN_HOSTS`, `*_HOST_KEY`) are skipped
+both ways.
 
-rocc never fetches anything itself. Keys that live somewhere remote (GitHub,
-GitLab, a vault) are fetched at launch time, by whatever launches the
-container, and passed in via either path — discovery picks them up:
+rocc never fetches anything itself; fetch remote keys in the launcher:
 
 ```sh
 -e KEYS="$(curl -fsSL https://github.com/<user>.keys)"
@@ -222,21 +196,13 @@ python base image).
 `cpu` is strictly the fallback: it is only the default when no accelerator
 device nodes exist at all, or when the matched family is not in the index.
 
-The pytorch recipe does not hardcode a variant. It reads
-https://download.pytorch.org/whl/ (a plain pypi HTML index) at install time
-and preselects the hardware-matched default from the live list, then checks
-the candidate actually ships wheels for this platform and python — the
-index has partial dirs (rocm7.14 has no cp312 x86_64 torchaudio), so rocc
-walks older until one does. On an interactive terminal it lists the newest
-builds for the detected hardware plus the cpu fallback (dirs it rejected
-are marked) and asks; press enter for the default, a number for a listed
-build, or type any name (e.g. rocm6.2) for older ones. Non-interactive runs
-use the verified default silently, and `--index` skips the whole thing. If
-the index is unreachable, an offline best-guess from the table above is
-used.
-
-Hardware-agnostic: the same binary runs on amd64/arm64, NVIDIA/AMD/Intel/CPU
-hosts and picks the right wheels at install time.
+The pytorch recipe reads the index live at install time instead of
+hardcoding a variant, and verifies the candidate ships wheels for this
+platform and python before preselecting it (the index has partial dirs —
+rocm7.14 has no cp312 x86_64 torchaudio), walking older until one does.
+Interactively it offers the newest few builds plus the cpu fallback and
+asks; `--index` overrides. If the index is unreachable, the table above
+is the offline guess.
 
 ## Subcommands
 
@@ -248,27 +214,23 @@ rocc install ...     # install recipes now
 rocc version
 ```
 
-`rocc` with no arguments is `rocc init` when it is pid 1: it supervises
-`sleep infinity` so the container stays alive as an ssh appliance. From a
-shell, bare `rocc` prints help instead. Unknown commands are an error,
-never a guess.
+Bare `rocc` means `rocc init` as pid 1; from a shell it prints help.
+Unknown commands are an error, never a guess.
 
 ## PID 1 behavior
 
 - **Zombie reaping**: a SIGCHLD-driven `wait4(-1, WNOHANG)` drain reaps
-  orphaned processes (sshd session leftovers, user daemons). Every child is
-  spawned through one locked spawn path, so no exit status is ever lost or
-  stolen between fork and register.
+  orphans; all children go through one locked spawn path, so no exit
+  status is lost or stolen.
 - **Signals**: `SIGTERM`/`SIGINT` are forwarded to the main process (10s
   grace, then `SIGKILL`); `SIGHUP` restarts sshd.
 - **Exit codes**: the container exits with the main process's exit code;
-  if the main command can't start and sshd isn't running, rocc exits 127
-  instead of idling as a dead container.
-- **sshd supervision**: restarted with capped backoff (1s → 30s) if it dies.
-- **PAM tolerance**: generates a PAM-free sshd config automatically on
-  distros whose sshd is built without PAM (e.g. Alpine).
-- **No installs at boot**: a flaky mirror can never delay or break boot;
-  installs are an explicit `rocc install` away.
+  if nothing is left to supervise, rocc exits 127 instead of idling.
+- **sshd supervision**: restarted with capped backoff (1s → 30s); if port
+  22 is held by another process it waits instead of thrashing.
+- **PAM tolerance**: PAM-free sshd config on distros whose sshd is built
+  without PAM (e.g. Alpine).
+- **No installs at boot**: a flaky mirror can never delay or break boot.
 
 ## Security notes
 
@@ -288,11 +250,9 @@ make test
 GOARCH=arm64 make build   # cross-compile for other hosts
 ```
 
-The module path is just `rocc` — no domain, on purpose. The Go toolchain
-only treats a module path's first *dotted* element as a network location, so
-a dotless first element means the module is permanently local: nothing to
-fetch, nothing to squat. If you ever publish this, rename the module (and
-imports) to a domain you actually control first.
+The module path is `rocc` — dotless, so permanently unresolvable: nothing
+to fetch, nothing to squat. Rename it (and the imports) if you ever
+publish.
 
 ## Layout
 
