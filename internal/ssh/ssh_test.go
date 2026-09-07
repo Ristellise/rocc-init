@@ -123,3 +123,49 @@ func TestDiscoverKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeAuthorizedKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "authorized_keys")
+	baked := "ssh-ed25519 AAAAbaked platform@gateway"
+	env1 := "ssh-ed25519 AAAAenv1 a@b"
+	env2 := "ssh-ed25519 AAAAenv2 c@d"
+
+	// image-baked keys and comment lines must survive a rocc boot
+	if err := os.WriteFile(path, []byte("# platform-managed\n"+baked+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeAuthorizedKeys(path, []string{env1, env2, baked}); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{baked, env1, env2, "# platform-managed"} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("merge lost %q: %q", want, string(got))
+		}
+	}
+	if n := strings.Count(string(got), baked); n != 1 {
+		t.Errorf("baked key should appear exactly once, got %d in %q", n, string(got))
+	}
+
+	// idempotent: a second boot must not duplicate anything
+	if err := mergeAuthorizedKeys(path, []string{env1, env2, baked}); err != nil {
+		t.Fatalf("merge again: %v", err)
+	}
+	got2, _ := os.ReadFile(path)
+	if string(got2) != string(got) {
+		t.Errorf("second merge changed content:\n%q\n%q", string(got), string(got2))
+	}
+
+	// fresh file: just the discovered keys
+	path2 := filepath.Join(t.TempDir(), "authorized_keys")
+	if err := mergeAuthorizedKeys(path2, []string{env1}); err != nil {
+		t.Fatalf("fresh merge: %v", err)
+	}
+	got3, _ := os.ReadFile(path2)
+	if string(got3) != env1+"\n" {
+		t.Errorf("fresh merge should hold just the key, got %q", string(got3))
+	}
+}

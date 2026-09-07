@@ -114,22 +114,26 @@ func Running() bool {
 }
 
 // StartSSH brings up sshd for root on port 22: installs openssh-server if
-// the binary is missing, writes authorized_keys, generates host keys, and
-// starts a supervised sshd.
+// the binary is missing, merges authorized_keys, generates host keys, and
+// starts a supervised sshd. An image that already ships sshd gets it
+// untouched: rocc runs the system sshd_config (Include drop-ins included)
+// and only adds keys. rocc writes its own appliance config when it had to
+// install openssh-server itself.
 func StartSSH(keys []string) error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("sshd must run as root")
 	}
 	bin, err := findSSHD()
+	installed := false
 	if err != nil {
 		util.Logf("ssh: sshd not found, installing openssh-server")
 		if err := ensureOpenSSH(); err != nil {
 			return err
 		}
-		bin, err = findSSHD()
-		if err != nil {
+		if bin, err = findSSHD(); err != nil {
 			return err
 		}
+		installed = true
 	}
 	if err := os.MkdirAll("/run/sshd", 0o755); err != nil {
 		return err
@@ -140,26 +144,35 @@ func StartSSH(keys []string) error {
 	if err := setupAuthorizedKeys(keys); err != nil {
 		return err
 	}
-	cfg, err := writeSSHDConfig(true)
-	if err != nil {
-		return err
-	}
-	out, testErr := proc.RunCapture(bin, "-t", "-f", cfg)
-	if testErr != nil {
-		if !strings.Contains(strings.ToLower(out), "pam") {
-			return fmt.Errorf("sshd config check failed: %v\n%s", testErr, out)
-		}
-		// sshd builds without PAM support (e.g. Alpine) reject the UsePAM
-		// option; fall back to a PAM-free config.
-		if cfg, err = writeSSHDConfig(false); err != nil {
+	args := []string{bin, "-D", "-e"}
+	if installed {
+		cfg, err := writeSSHDConfig(true)
+		if err != nil {
 			return err
 		}
-		if out, testErr = proc.RunCapture(bin, "-t", "-f", cfg); testErr != nil {
-			return fmt.Errorf("sshd config check failed: %v\n%s", testErr, out)
+		out, testErr := proc.RunCapture(bin, "-t", "-f", cfg)
+		if testErr != nil {
+			if !strings.Contains(strings.ToLower(out), "pam") {
+				return fmt.Errorf("sshd config check failed: %v\n%s", testErr, out)
+			}
+			// sshd builds without PAM support (e.g. Alpine) reject the UsePAM
+			// option; fall back to a PAM-free config.
+			if cfg, err = writeSSHDConfig(false); err != nil {
+				return err
+			}
+			if out, testErr = proc.RunCapture(bin, "-t", "-f", cfg); testErr != nil {
+				return fmt.Errorf("sshd config check failed: %v\n%s", testErr, out)
+			}
+			util.Logf("ssh: sshd built without PAM, using PAM-free config")
 		}
-		util.Logf("ssh: sshd built without PAM, using PAM-free config")
+		args = append(args, "-f", cfg)
+		util.Logf("ssh: %d key(s) authorized for root, sshd on port 22", len(keys))
+	} else {
+		if out, err := proc.RunCapture(bin, "-t"); err != nil {
+			return fmt.Errorf("system sshd_config check failed: %v\n%s", err, out)
+		}
+		util.Logf("ssh: %d key(s) authorized for root, using system sshd_config", len(keys))
 	}
-	util.Logf("ssh: %d key(s) authorized for root, sshd on port 22", len(keys))
 	if err := writeMotd(); err != nil {
 		util.Logf("ssh: motd: %v (continuing)", err)
 	}
@@ -174,7 +187,7 @@ func StartSSH(keys []string) error {
 			util.Logf("ssh: port 22 in use by pid %d (%s), waiting", pid, cmd)
 			return nil
 		}
-		p, err := proc.SpawnDaemon([]string{bin, "-D", "-e", "-f", cfg})
+		p, err := proc.SpawnDaemon(args)
 		if err != nil {
 			util.Logf("ssh: %v", err)
 			return nil
@@ -253,6 +266,10 @@ func ensureHostKeys() error {
 	return proc.Run(bin, "-A")
 }
 
+// setupAuthorizedKeys merges discovered keys into root's authorized_keys.
+// Existing lines (image-baked or platform-written keys) are preserved:
+// rocc never removes a key. Revoke by editing the file — sshd re-reads it
+// on every login.
 func setupAuthorizedKeys(keys []string) error {
 	u, err := user.Lookup("root")
 	if err != nil {
@@ -272,14 +289,38 @@ func setupAuthorizedKeys(keys []string) error {
 	}
 	_ = os.Chown(dir, uid, gid)
 	path := filepath.Join(dir, "authorized_keys")
-	content := ""
-	if len(keys) > 0 {
-		content = strings.Join(keys, "\n") + "\n"
-	}
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := mergeAuthorizedKeys(path, keys); err != nil {
 		return err
 	}
 	return os.Chown(path, uid, gid)
+}
+
+// mergeAuthorizedKeys appends keys to the file at path, keeping existing
+// non-empty lines and dropping duplicates. Idempotent.
+func mergeAuthorizedKeys(path string, keys []string) error {
+	var lines []string
+	if b, err := os.ReadFile(path); err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			if strings.TrimSpace(l) != "" {
+				lines = append(lines, l)
+			}
+		}
+	}
+	seen := make(map[string]bool, len(lines)+len(keys))
+	for _, l := range lines {
+		seen[l] = true
+	}
+	for _, k := range keys {
+		if !seen[k] {
+			seen[k] = true
+			lines = append(lines, k)
+		}
+	}
+	content := ""
+	if len(lines) > 0 {
+		content = strings.Join(lines, "\n") + "\n"
+	}
+	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 // motdPath is overridable for tests.
@@ -317,6 +358,9 @@ func writeMotd() error {
 // public key auth only, no passwords, root, port 22.
 func writeSSHDConfig(usePAM bool) (string, error) {
 	var b strings.Builder
+	// Distro drop-ins come first so they override rocc's settings, same
+	// precedence as a stock sshd_config.
+	b.WriteString("Include /etc/ssh/sshd_config.d/*.conf\n")
 	b.WriteString("Port 22\n")
 	b.WriteString("PermitRootLogin prohibit-password\n")
 	b.WriteString(`
@@ -328,6 +372,8 @@ AuthorizedKeysFile .ssh/authorized_keys
 StrictModes no
 X11Forwarding no
 PrintMotd yes
+LoginGraceTime 15
+MaxStartups 3:30:6
 Subsystem sftp internal-sftp
 LogLevel INFO
 `)

@@ -45,7 +45,8 @@ docker run -d --name dev -p 2222:22 \
 (arm64: `rocc_linux_arm64`; releases also carry `.sha256` checksums)
 
 - sshd starts because a public key was discovered in `SSH_KEY`
-- openssh-server is installed automatically if missing
+- openssh-server is installed automatically if missing; if the image
+  already ships sshd, its config is used as-is and rocc only adds keys
 - `ssh -p 2222 root@localhost` — public key only, no passwords
 
 Then, from inside the box (ssh or docker exec):
@@ -221,19 +222,32 @@ Unknown commands are an error, never a guess.
   if nothing is left to supervise, rocc exits 127 instead of idling.
 - **sshd supervision**: restarted with capped backoff (1s → 30s); if port
   22 is held by another process it waits instead of thrashing.
+- **sshd config**: an image that already ships sshd keeps its own
+  sshd_config — `sshd_config.d` drop-ins included — untouched; rocc only
+  merges keys into authorized_keys. When rocc installs sshd itself, it
+  writes an appliance config that includes `sshd_config.d/*.conf` first,
+  so distro drop-ins still win.
 - **PAM tolerance**: PAM-free sshd config on distros whose sshd is built
   without PAM (e.g. Alpine).
 - **No installs at boot**: a flaky mirror can never delay or break boot.
 
 ## Security notes
 
-- Public-key auth only; passwords and challenge-response are disabled.
+- Public-key auth only; passwords and challenge-response are disabled
+  (rocc-written config; when the image ships sshd, its config stands).
 - Key discovery authorizes any public key found in the environment — don't
   pass keys you don't trust into a container where rocc runs sshd.
+- authorized_keys is merged, never overwritten: image-baked or
+  platform-written keys survive boot. rocc never removes a key — revoke
+  by editing the file (sshd re-reads it on every login).
 - `StrictModes no` keeps things robust on odd images; authorized_keys are
   still written 0600 with a 0700 `.ssh`.
 - Host keys are generated on first boot; mount a volume at `/etc/ssh` to
   keep them stable across restarts.
+- `LoginGraceTime 15` and `MaxStartups 3:30:6` cap pre-auth connections, so
+  port scanners on a public IP can't squat auth slots and crowd out your
+  login (rocc-written config; drop one in `sshd_config.d` for images that
+  ship their own sshd).
 
 ## Building
 

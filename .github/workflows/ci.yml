@@ -23,3 +23,18 @@ jobs:
       - run: go test ./...
       # compile-check the other architecture too (tests run on amd64 host)
       - run: GOARCH=arm64 go vet ./...
+
+      - name: build
+        run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -trimpath -ldflags "-s -w -X rocc/internal/version.Version=ci-${GITHUB_SHA::7}" \
+              -o "rocc_linux_${arch}" .
+            sha256sum "rocc_linux_${arch}" > "rocc_linux_${arch}.sha256"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rocc-ci
+          path: rocc_linux_*
+          retention-days: 14
