@@ -133,31 +133,42 @@ func maxCUDAMajorFromDriver(driver string) int {
 	}
 }
 
+// matchedFamily maps detected hardware to the wheel family it wants.
+func matchedFamily(g gpu.Info) string {
+	switch g.Vendor() {
+	case "nvidia":
+		return "cuda"
+	case "rocm":
+		if runtime.GOARCH == "amd64" {
+			return "rocm"
+		}
+	case "drm":
+		return "xpu"
+	}
+	return "cpu"
+}
+
+// familyMax is the driver-imposed ceiling for a family; 1<<30 for all but
+// cuda, where the detected nvidia driver bounds the CUDA major (cu12x when
+// the driver is unknown: CUDA 12.x wheels run on >= 525).
+func familyMax(family, driver string) int {
+	if family != "cuda" {
+		return 1 << 30
+	}
+	if m := maxCUDAMajorFromDriver(driver); m > 0 {
+		return m
+	}
+	return 12
+}
+
 // defaultVariant picks the hardware-matched variant from the live list.
 // The default follows the device files, never cpu: nvidia -> newest cuXXX the
 // driver supports, rocm -> newest rocmX.Y, render nodes only -> xpu. cpu is
 // strictly a fallback for "no accelerator devices" or "family not in index".
 func defaultVariant(vs []variant, g gpu.Info, driver string) (variant, bool) {
-	switch g.Vendor() {
-	case "nvidia":
-		max := maxCUDAMajorFromDriver(driver)
-		if max == 0 {
-			max = 12 // unknown driver: CUDA 12.x wheels run on >= 525
-		}
-		if best, ok := bestInFamily(vs, "cuda", max); ok {
-			return best, true
-		}
-	case "rocm":
-		if runtime.GOARCH == "amd64" {
-			if best, ok := bestInFamily(vs, "rocm", 1<<30); ok {
-				return best, true
-			}
-		}
-	case "drm":
-		// render nodes with no nvidia*/kfd: most likely an intel gpu.
-		if best, ok := bestInFamily(vs, "xpu", 1<<30); ok {
-			return best, true
-		}
+	family := matchedFamily(g)
+	if best, ok := bestInFamily(vs, family, familyMax(family, driver)); ok {
+		return best, true
 	}
 	return bestInFamily(vs, "cpu", 1<<30)
 }
@@ -217,12 +228,40 @@ func orUnknown(s string) string {
 	return s
 }
 
-// menu shows the variant list and asks. Incompatible variants are annotated
-// (the "greyed out" ones) but stay selectable as an expert override.
-// EOF or empty input takes the default.
+// menuShow caps how many builds the interactive menu lists.
+const menuShow = 5
+
+// menuList curates the menu: the newest few builds for the detected
+// hardware (gated by the driver for cuda) plus the cpu fallback. The full
+// index stays reachable by typing a variant name.
+func menuList(vs []variant, g gpu.Info, driver string) []variant {
+	family := matchedFamily(g)
+	max := familyMax(family, driver)
+	var shown []variant
+	for _, v := range vs {
+		if v.family == family && v.cudaMajor() <= max {
+			shown = append(shown, v)
+		}
+	}
+	sort.Slice(shown, func(i, j int) bool { return shown[i].num > shown[j].num })
+	if len(shown) > menuShow {
+		shown = shown[:menuShow]
+	}
+	if family != "cpu" {
+		if cpu, ok := bestInFamily(vs, "cpu", 1<<30); ok {
+			shown = append(shown, cpu)
+		}
+	}
+	return shown
+}
+
+// menu shows the curated variant list and asks. Numbers pick from the
+// listed entries; any variant name from the full index works too; enter or
+// EOF takes the default.
 func menu(vs []variant, def variant, g gpu.Info, driver string, r *bufio.Reader, w io.Writer) string {
+	shown := menuList(vs, g, driver)
 	fmt.Fprintf(w, "pytorch wheel variants (%s):\n\n", whlBase)
-	for i, v := range vs {
+	for i, v := range shown {
 		mark := "   "
 		if v.name == def.name {
 			mark = "-> "
@@ -243,8 +282,8 @@ func menu(vs []variant, def variant, g gpu.Info, driver string, r *bufio.Reader,
 		case ans == "":
 			return def.url
 		case isInt(ans):
-			if n, _ := strconv.Atoi(ans); n >= 1 && n <= len(vs) {
-				return vs[n-1].url
+			if n, _ := strconv.Atoi(ans); n >= 1 && n <= len(shown) {
+				return shown[n-1].url
 			}
 		default:
 			for _, v := range vs {
@@ -253,7 +292,7 @@ func menu(vs []variant, def variant, g gpu.Info, driver string, r *bufio.Reader,
 				}
 			}
 		}
-		fmt.Fprintln(w, "pick a number or variant name, or press enter for the default")
+		fmt.Fprintln(w, "pick a listed number, or type any variant name (e.g. rocm6.2, cu126)")
 	}
 }
 

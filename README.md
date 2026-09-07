@@ -245,9 +245,10 @@ rocc install ...     # install recipes now
 rocc version
 ```
 
-`rocc` with no arguments is `rocc init`: it supervises `sleep infinity` so
-the container stays alive as an ssh appliance. Unknown commands are an
-error, never a guess.
+`rocc` with no arguments is `rocc init` when it is pid 1: it supervises
+`sleep infinity` so the container stays alive as an ssh appliance. From a
+shell, bare `rocc` prints help instead. Unknown commands are an error,
+never a guess.
 
 ## PID 1 behavior
 
@@ -275,17 +276,6 @@ error, never a guess.
   still written 0600 with a 0700 `.ssh`.
 - Host keys are generated on first boot; mount a volume at `/etc/ssh` to
   keep them stable across restarts.
-
-## Easter egg
-
-rocc is not a compiler, and it will tell you so:
-
-```
-$ rocc main.c -o main
-rocc no compile. rocc only install and init.
-```
-
-It exits 1, like a compiler that failed you.
 
 ## Building
 

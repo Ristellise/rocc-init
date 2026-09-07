@@ -38,7 +38,13 @@ func main() {
 	}
 
 	if len(args) == 0 {
-		// bare `rocc` is the init
+		// bare `rocc` means "I am the container init" — only true as pid 1.
+		// From a shell it is a typo, so show help instead of idling.
+		if os.Getpid() != 1 {
+			fmt.Fprintln(os.Stderr, "rocc: not pid 1 — bare `rocc` is the container init; run `rocc help` for commands")
+			printUsage(os.Stdout)
+			os.Exit(1)
+		}
 		boot.Run(nil)
 		return
 	}
@@ -171,7 +177,8 @@ Usage:
   rocc install <item>...     install recipes now
   rocc version | help
 
-rocc with no arguments is "rocc init".
+rocc with no arguments is "rocc init" when it is pid 1; from a shell,
+bare rocc prints help instead of idling.
 
 Install recipes:
   uv                      astral uv python manager
