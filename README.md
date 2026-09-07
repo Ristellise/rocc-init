@@ -45,8 +45,7 @@ docker run -d --name dev -p 2222:22 \
 (arm64: `rocc_linux_arm64`; releases also carry `.sha256` checksums)
 
 - sshd starts because a public key was discovered in `SSH_KEY`
-- openssh-server is installed if missing; sshd runs the image's own
-  sshd_config — rocc never writes one
+- openssh-server is installed if missing
 - `ssh -p 2222 root@localhost` — root login with your key
 
 Then, from inside the box (ssh or docker exec):
@@ -64,15 +63,13 @@ rocc install apt:htop,curl
 
 ## Running custom containers
 
-rocc works with any image and any start command. Nothing is injected into
-the image; rocc just has to be the container's first process.
+rocc init is intended to be the container's first process, and as such
+works with any image or start command.
 
 ### Flaky start commands (RunPod & friends)
 
-Some platforms mangle the container start command — quotes and spaces get
-eaten, or the field resets between restarts. Env vars survive what command
-fields don't, so carry the whole bootstrap in one and make the start
-command a fixed incantation:
+Certain platforms mangle the container start command. In the event where
+this is a thing, use the following workaround:
 
 Env vars — one key, one value, each a single line, ready to paste into
 key/value fields:
@@ -91,10 +88,6 @@ bash -c eval${IFS}$ROCC
 - `KEYS`: any name works; a path to a key file works too
 - `ROCC`: drop the `apt-get` prefix if the image ships curl; append a
   workload with `... && exec rocc init -- <cmd args...>`
-- `${IFS}` expands to a space at eval time — no quotes, no literal space,
-  nothing for a flaky parser to eat. If a shell evaluates the command
-  first, quote or escape it: `bash -c 'eval${IFS}$ROCC'` or
-  `bash -c eval\${IFS}\$ROCC`
 - the `exec` makes rocc PID 1; `ROCC` is read by bash, never by rocc
 
 ### When the command field behaves
@@ -222,8 +215,7 @@ Unknown commands are an error, never a guess.
   if nothing is left to supervise, rocc exits 127 instead of idling.
 - **sshd supervision**: restarted with capped backoff (1s → 30s); if port
   22 is held by another process it waits instead of thrashing.
-- **sshd config**: the image's own sshd_config — `sshd_config.d` drop-ins
-  included — is used as-is. rocc never writes sshd config.
+- **sshd config**: the image's own, `sshd_config.d` drop-ins included.
 - **No installs at boot**: a flaky mirror can never delay or break boot.
 
 ## Security notes
@@ -239,8 +231,6 @@ Unknown commands are an error, never a guess.
   even under stock `StrictModes yes`.
 - Host keys are generated on first boot; mount a volume at `/etc/ssh` to
   keep them stable across restarts.
-- want pre-auth caps against port scanners (`LoginGraceTime`,
-  `MaxStartups`)? drop a `/etc/ssh/sshd_config.d/*.conf` — rocc won't.
 
 ## Building
 
