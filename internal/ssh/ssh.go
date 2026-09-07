@@ -6,6 +6,8 @@
 package ssh
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -110,6 +112,40 @@ func readKeyFile(path string) string {
 	return string(b)
 }
 
+// keyFingerprint returns the OpenSSH-style SHA256 fingerprint
+// ("SHA256:...") of a public key line, or "" if the key blob does not
+// decode.
+func keyFingerprint(line string) string {
+	f := strings.Fields(line)
+	if len(f) < 2 {
+		return ""
+	}
+	blob, err := base64.StdEncoding.DecodeString(f[1])
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(blob)
+	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
+}
+
+// logAuthorizedKeys logs one line per authorized key — fingerprint +
+// comment — so the pod log answers "which keys are live" without opening
+// a shell into the box.
+func logAuthorizedKeys(keys []string) {
+	for _, k := range keys {
+		fp := keyFingerprint(k)
+		if fp == "" {
+			continue
+		}
+		comment := strings.Join(strings.Fields(k)[2:], " ")
+		if comment != "" {
+			util.Logf("ssh: authorized %s %s", fp, comment)
+		} else {
+			util.Logf("ssh: authorized %s", fp)
+		}
+	}
+}
+
 // Running reports whether the sshd supervisor is up.
 func Running() bool {
 	return sshSupervisor != nil
@@ -146,6 +182,7 @@ func StartSSH(keys []string) error {
 		return fmt.Errorf("sshd config check failed: %v\n%s", err, out)
 	}
 	util.Logf("ssh: %d key(s) authorized for root, sshd on port 22", len(keys))
+	logAuthorizedKeys(keys)
 	if err := writeMotd(); err != nil {
 		util.Logf("ssh: motd: %v (continuing)", err)
 	}

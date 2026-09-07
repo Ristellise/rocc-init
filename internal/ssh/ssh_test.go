@@ -68,6 +68,19 @@ func TestValidPubKey(t *testing.T) {
 	}
 }
 
+func TestKeyFingerprint(t *testing.T) {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEDWif5DQHdS/VxaPqAeEs2qpvDvjMJqGtBK5KueGY3E shinon@shion"
+	want := "SHA256:BccVFLn+hwCNfjPkgVft5Gw5k91EW8+ZFRpVG9t6qlY"
+	if got := keyFingerprint(key); got != want {
+		t.Errorf("fingerprint: got %s, want %s", got, want)
+	}
+	for _, bad := range []string{"", "garbage", "ssh-ed25519 not-base64 x", "ssh-ed25519"} {
+		if got := keyFingerprint(bad); got != "" {
+			t.Errorf("fingerprint of %q should be empty, got %s", bad, got)
+		}
+	}
+}
+
 func TestDiscoverKeys(t *testing.T) {
 	key1 := "ssh-ed25519 AAAAone a@b"
 	key2 := "ssh-ed25519 AAAtwo c@d"
