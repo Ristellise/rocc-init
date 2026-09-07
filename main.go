@@ -157,16 +157,5 @@ Install recipes:
   apt:<pkgs> apk:<pkgs> pip:<pkgs>   package-manager passthroughs
   flags: --index <url>    pytorch wheel index override
          --pkgs <list>    pytorch package set override (e.g. "torch,torchvision")
-
-There are no configuration environment variables. Public keys are
-discovered by value: any env var holding a key string or a path to a key
-file works (run "rocc keys" to see what was found).
-
-sshd listens on port 22 as root (map it with docker -p). openssh-server is
-installed automatically if missing.
-
-Hardware detection probes /dev only: nvidia* -> CUDA wheels (gated by the
-detected driver), kfd -> ROCm wheels (x86_64), dri/* -> XPU wheels,
-nothing -> CPU wheels. cpu is always the fallback, never the first choice.
 `)
 }
