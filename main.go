@@ -29,7 +29,9 @@ import (
 	"rocc/internal/util"
 )
 
-const version = "0.3.0"
+// version is stamped by the release workflow via -ldflags -X; local
+// builds say "dev".
+var version = "dev"
 
 func main() {
 	args := os.Args[1:]

@@ -35,10 +35,15 @@ docker run -d --name dev -p 2222:22 \
   -e SSH_KEY="ssh-ed25519 AAAAC3... you@laptop" \
   ubuntu:24.04 \
   bash -c 'apt-get update -qq && apt-get install -y -qq curl && \
-            curl -fsSL https://your-host/rocc -o /usr/local/bin/rocc && \
+            curl -fsSL https://github.com/Ristellise/rocc-init/releases/latest/download/rocc_linux_amd64 \
+              -o /usr/local/bin/rocc && \
             chmod +x /usr/local/bin/rocc && \
             exec rocc init'
 ```
+
+(on arm64 hosts use `rocc_linux_arm64`; each release also carries `.sha256`
+checksums, and `releases/latest/download/<name>` always resolves to the
+newest release)
 
 - sshd starts because a public key was discovered in `SSH_KEY` (any variable
   name works)
@@ -59,6 +64,18 @@ rocc install apt:htop,curl
 ```
 
 `rocc install pytorch` installs uv first if it is not there yet.
+
+## Releasing
+
+Tag a commit and push the tag; the [release workflow](.github/workflows/release.yml)
+runs vet + tests, builds static binaries for linux/amd64 and linux/arm64,
+stamps `rocc version` with the tag, and attaches them (plus `.sha256`
+checksums) to the GitHub release:
+
+```sh
+git tag v0.4.0
+git push origin v0.4.0
+```
 
 If you prefer baking a minimal image instead of pulling at start:
 

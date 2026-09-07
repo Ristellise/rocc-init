@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false # no dependencies to cache
+
+      - run: go vet ./...
+      - run: go test ./...
+      # compile-check the other architecture too (tests run on amd64 host)
+      - run: GOARCH=arm64 go vet ./...

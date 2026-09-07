@@ -1,0 +1,45 @@
+# Release: on tag push (v*), vet + test, cross-compile static binaries,
+# stamp rocc version with the tag, attach binaries + sha256 checksums to a
+# GitHub release. Publish with:
+#
+#   git tag v0.4.0 && git push origin v0.4.0
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false # no dependencies to cache
+
+      - name: vet + test
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: build
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -o "rocc_linux_${arch}" .
+            sha256sum "rocc_linux_${arch}" > "rocc_linux_${arch}.sha256"
+          done
+
+      - name: upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rocc_linux_*
+          fail_on_unmatched_files: true
