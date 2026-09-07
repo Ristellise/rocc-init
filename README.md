@@ -224,13 +224,16 @@ device nodes exist at all, or when the matched family is not in the index.
 
 The pytorch recipe does not hardcode a variant. It reads
 https://download.pytorch.org/whl/ (a plain pypi HTML index) at install time
-and preselects the hardware-matched default from the live list. On an
-interactive terminal it prints every variant — cuXXX gated by the detected
-nvidia driver, rocm x.y, xpu, cpu marked as fallback — and asks; press enter
-to take the default, or type a number/name for an expert override.
-Non-interactive runs (docker, scripts) use the default silently, and
-`--index` skips the whole thing. If the index is unreachable, an offline
-best-guess from the table above is used.
+and preselects the hardware-matched default from the live list, then checks
+the candidate actually ships wheels for this platform and python — the
+index has partial dirs (rocm7.14 has no cp312 x86_64 torchaudio), so rocc
+walks older until one does. On an interactive terminal it lists the newest
+builds for the detected hardware plus the cpu fallback (dirs it rejected
+are marked) and asks; press enter for the default, a number for a listed
+build, or type any name (e.g. rocm6.2) for older ones. Non-interactive runs
+use the verified default silently, and `--index` skips the whole thing. If
+the index is unreachable, an offline best-guess from the table above is
+used.
 
 Hardware-agnostic: the same binary runs on amd64/arm64, NVIDIA/AMD/Intel/CPU
 hosts and picks the right wheels at install time.

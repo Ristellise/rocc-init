@@ -122,11 +122,11 @@ func ensurePyTorch(g gpu.Info, opts PyTorchOptions) error {
 	if err := EnsureUV(); err != nil {
 		return err
 	}
-	index := chooseIndex(g, opts.Index)
 	pkgs := util.SplitPkgList(opts.Pkgs)
 	if len(pkgs) == 0 {
 		pkgs = []string{"torch", "torchvision", "torchaudio"}
 	}
+	index := chooseIndex(g, opts.Index, pkgs)
 
 	// The pytorch recipe installs into an interpreter that is already there.
 	// If the image has none, the user composes one in first (apt:python3,

@@ -189,8 +189,9 @@ func bestInFamily(vs []variant, family string, maxMajor int) (variant, bool) {
 
 // chooseIndex resolves the wheel index for the pytorch recipe: an explicit
 // override wins, else the hardware-matched default from the live index —
-// confirmed interactively when we have a terminal.
-func chooseIndex(g gpu.Info, override string) string {
+// verified against the target packages, and confirmed interactively when we
+// have a terminal.
+func chooseIndex(g gpu.Info, override string, pkgs []string) string {
 	if override != "" {
 		return override
 	}
@@ -201,12 +202,103 @@ func chooseIndex(g gpu.Info, override string) string {
 		return def
 	}
 	driver := gpu.NvidiaDriverVersion()
-	def, _ := defaultVariant(vs, g, driver)
+	def, rejected := validatedDefault(vs, g, driver, cpTag(), pkgs)
 	if !isInteractive() {
 		util.Logf("install: pytorch: variant %s (driver %s)", def.name, orUnknown(driver))
 		return def.url
 	}
-	return menu(vs, def, g, driver, bufio.NewReader(os.Stdin), os.Stdout)
+	return menu(vs, def, g, driver, rejected, bufio.NewReader(os.Stdin), os.Stdout)
+}
+
+// validatedDefault walks the curated newest-first list and returns the first
+// variant whose index actually serves every target package for this
+// platform and python. The live index has partial dirs (rocm7.14 ships no
+// cp312 x86_64 torchaudio), so newest-by-sort is not always installable.
+// Also returns the names it rejected, for the menu to annotate.
+func validatedDefault(vs []variant, g gpu.Info, driver, cp string, pkgs []string) (variant, map[string]bool) {
+	rejected := map[string]bool{}
+	for _, v := range menuList(vs, g, driver) {
+		if servesPkgs(v, pkgs, cp) {
+			return v, rejected
+		}
+		rejected[v.name] = true
+	}
+	def, _ := defaultVariant(vs, g, driver)
+	return def, rejected
+}
+
+// servesPkgs checks that every target package has an installable wheel in
+// the variant's index.
+func servesPkgs(v variant, pkgs []string, cp string) bool {
+	tag := archTag()
+	if cp != "" {
+		tag = cp + " " + tag
+	}
+	for _, pkg := range pkgs {
+		if !servesWheels(v.url+pkg+"/", cp) {
+			util.Logf("install: pytorch: %s has no %s wheels, trying older", v.name, tag)
+			return false
+		}
+	}
+	return true
+}
+
+// servesWheels reports whether url (a /whl/<variant>/<pkg>/ page) lists a
+// wheel for this platform and python. Best-effort: when the page cannot be
+// fetched it says yes, and the resolver reports the real problem.
+func servesWheels(url, cp string) bool {
+	curl, err := exec.LookPath("curl")
+	if err != nil {
+		return true
+	}
+	out, err := proc.RunCapture(curl, "-fsSL", url)
+	if err != nil {
+		return true
+	}
+	return pageHasWheel(out, cp, archTag())
+}
+
+var hrefRe = regexp.MustCompile(`href="[^"]*\.whl[^"]*"`)
+
+// pageHasWheel reports whether an index page lists a wheel href matching
+// both the python ABI tag (when known) and the arch.
+func pageHasWheel(body, cp, arch string) bool {
+	for _, href := range hrefRe.FindAllString(body, -1) {
+		if strings.Contains(href, arch) && (cp == "" || strings.Contains(href, cp)) {
+			return true
+		}
+	}
+	return false
+}
+
+// cpTag returns the image python's ABI tag (e.g. "cp312"), or "" when
+// python3 cannot answer.
+func cpTag() string {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		return ""
+	}
+	out, err := proc.RunCapture(py, "-c", "import sys;print(sys.implementation.cache_tag)")
+	if err != nil {
+		return ""
+	}
+	var digits []byte
+	for _, c := range out {
+		if c >= '0' && c <= '9' {
+			digits = append(digits, byte(c))
+		}
+	}
+	if len(digits) == 0 {
+		return ""
+	}
+	return "cp" + string(digits)
+}
+
+func archTag() string {
+	if runtime.GOARCH == "arm64" {
+		return "aarch64"
+	}
+	return "x86_64"
 }
 
 func isInteractive() bool {
@@ -258,7 +350,7 @@ func menuList(vs []variant, g gpu.Info, driver string) []variant {
 // menu shows the curated variant list and asks. Numbers pick from the
 // listed entries; any variant name from the full index works too; enter or
 // EOF takes the default.
-func menu(vs []variant, def variant, g gpu.Info, driver string, r *bufio.Reader, w io.Writer) string {
+func menu(vs []variant, def variant, g gpu.Info, driver string, rejected map[string]bool, r *bufio.Reader, w io.Writer) string {
 	shown := menuList(vs, g, driver)
 	fmt.Fprintf(w, "pytorch wheel variants (%s):\n\n", whlBase)
 	for i, v := range shown {
@@ -266,7 +358,14 @@ func menu(vs []variant, def variant, g gpu.Info, driver string, r *bufio.Reader,
 		if v.name == def.name {
 			mark = "-> "
 		}
-		if note := variantNote(v, g, driver); note != "" {
+		note := variantNote(v, g, driver)
+		if rejected[v.name] {
+			if note != "" {
+			note += "; "
+			}
+			note += "no installable wheels here"
+		}
+		if note != "" {
 			fmt.Fprintf(w, " %s %d) %-10s (%s)\n", mark, i+1, v.name, note)
 		} else {
 			fmt.Fprintf(w, " %s %d) %-10s\n", mark, i+1, v.name)
