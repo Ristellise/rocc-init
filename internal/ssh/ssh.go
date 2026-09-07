@@ -166,6 +166,14 @@ func StartSSH(keys []string) error {
 
 	s := &proc.Supervisor{Name: "sshd"}
 	s.Spawn = func() *proc.Proc {
+		// If something else already listens on 22 (a distro sshd started
+		// by the image, say), spawning ours would just die with "Address
+		// already in use" and churn. Wait for the port instead; the
+		// supervisor backs off between attempts.
+		if pid, cmd, held := proc.PortHeld(22); held {
+			util.Logf("ssh: port 22 in use by pid %d (%s), waiting", pid, cmd)
+			return nil
+		}
 		p, err := proc.SpawnDaemon([]string{bin, "-D", "-e", "-f", cfg})
 		if err != nil {
 			util.Logf("ssh: %v", err)
