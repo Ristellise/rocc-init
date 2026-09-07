@@ -1,8 +1,10 @@
 # rocc
 
-A tiny, dependency-free Go binary that runs as **PID 1** in a container and
-turns any base image into an SSH-accessible dev box. Boot does exactly one
-job — ssh — and everything else you ask for explicitly.
+Because your init script shouldn't be rocc hard.
+
+A tiny static binary that runs as **PID 1** and turns any image into an
+ssh-accessible dev box. Boot does one job — sshd when keys are discovered;
+everything else is an explicit `rocc install` away.
 
 It is the ~2% of systemd a container actually needs, without the other 98%:
 
@@ -14,7 +16,7 @@ It is the ~2% of systemd a container actually needs, without the other 98%:
 | 30+ MB + libc deps                    | one static binary, stdlib only, no cgo   |
 
 No configuration environment variables: keys are discovered by value,
-hardware by probing /dev, everything else you ask for explicitly.
+hardware by probing /dev.
 
 Boot sequence:
 
