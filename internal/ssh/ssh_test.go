@@ -1,0 +1,83 @@
+package ssh
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestValidPubKey(t *testing.T) {
+	good := []string{
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB8x user@host",
+		"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQ test",
+		"ecdsa-sha2-nistp256 AAAAE2VjZHNh test",
+		"sk-ssh-ed25519@openssh.com AAAA key",
+	}
+	for _, k := range good {
+		if !validPubKey(k) {
+			t.Errorf("want valid: %q", k)
+		}
+	}
+	bad := []string{"", "garbage", "ssh-ed25519", "AAAA key", "some comment"}
+	for _, k := range bad {
+		if validPubKey(k) {
+			t.Errorf("want invalid: %q", k)
+		}
+	}
+}
+
+func TestDiscoverKeys(t *testing.T) {
+	key1 := "ssh-ed25519 AAAAone a@b"
+	key2 := "ssh-ed25519 AAAtwo c@d"
+	fileKey := "ssh-ed25519 AAAAfile f@g"
+	dup := "ssh-ed25519 AAAdup x@y"
+	hostKey1 := "ssh-ed25519 AAAAhost host.example"
+	hostKey2 := "ssh-ed25519 AAAAhost2 host2.example"
+
+	// path 1: key as a full string, any variable name
+	t.Setenv("MY_ARBITRARY_VAR", key1)
+	t.Setenv("ANOTHER_ONE", key2+"\ngarbage line")
+	t.Setenv("DUP_A", dup)
+	t.Setenv("DUP_B", dup)
+
+	// path 2: value is a path to a file holding keys
+	keyFile := filepath.Join(t.TempDir(), "authorized_keys")
+	if err := os.WriteFile(keyFile, []byte(fileKey+"\nnot a key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOGIN_KEYS_FILE", keyFile)
+
+	// a directory is not a key file
+	t.Setenv("POINTS_AT_DIR", filepath.Dir(keyFile))
+
+	// host-key-shaped values must never be authorized as login keys
+	t.Setenv("SSH_KNOWN_HOSTS", hostKey1)
+	t.Setenv("SERVER_HOST_KEY", hostKey2)
+	hostKeyFile := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(hostKeyFile, []byte(hostKey2+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSH_KNOWN_HOSTS_FILE", hostKeyFile)
+
+	// noise that must be ignored
+	t.Setenv("NOT_A_KEY", "just some words here")
+	t.Setenv("ALSO_NOT", "/this/path/does/not/exist")
+
+	got := make(map[string]int)
+	for _, k := range DiscoverKeys() {
+		got[k]++
+	}
+	for _, want := range []string{key1, key2, fileKey, dup} {
+		if got[want] == 0 {
+			t.Errorf("expected key to be discovered: %q", want)
+		}
+	}
+	if got[dup] > 1 {
+		t.Error("duplicate key not deduplicated")
+	}
+	for _, bad := range []string{hostKey1, hostKey2} {
+		if got[bad] > 0 {
+			t.Errorf("host key leaked into authorized set: %q", bad)
+		}
+	}
+}
