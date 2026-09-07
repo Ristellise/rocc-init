@@ -122,10 +122,7 @@ func ensurePyTorch(g gpu.Info, opts PyTorchOptions) error {
 	if err := EnsureUV(); err != nil {
 		return err
 	}
-	index := opts.Index
-	if index == "" {
-		index = g.TorchIndex()
-	}
+	index := chooseIndex(g, opts.Index)
 	pkgs := util.SplitPkgList(opts.Pkgs)
 	if len(pkgs) == 0 {
 		pkgs = []string{"torch", "torchvision", "torchaudio"}

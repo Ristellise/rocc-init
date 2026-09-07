@@ -64,7 +64,7 @@ func TestDetect(t *testing.T) {
 		t.Fatal(err)
 	}
 	g = Detect()
-	if !g.DRM || g.Vendor() != "drm" || g.TorchIndex() != "https://download.pytorch.org/whl/cpu" {
-		t.Fatalf("drm-only should fall back to cpu wheels, got %+v", g)
+	if !g.DRM || g.Vendor() != "drm" || g.TorchIndex() != "https://download.pytorch.org/whl/xpu" {
+		t.Fatalf("render nodes should default to xpu wheels (cpu only as fallback), got %+v", g)
 	}
 }

@@ -16,6 +16,7 @@ import (
 
 	"rocc/internal/proc"
 	"rocc/internal/util"
+	"rocc/internal/version"
 )
 
 var sshSupervisor *proc.Supervisor
@@ -159,6 +160,9 @@ func StartSSH(keys []string) error {
 		util.Logf("ssh: sshd built without PAM, using PAM-free config")
 	}
 	util.Logf("ssh: %d key(s) authorized for root, sshd on port 22", len(keys))
+	if err := writeMotd(); err != nil {
+		util.Logf("ssh: motd: %v (continuing)", err)
+	}
 
 	s := &proc.Supervisor{Name: "sshd"}
 	s.Spawn = func() *proc.Proc {
@@ -270,6 +274,37 @@ func setupAuthorizedKeys(keys []string) error {
 	return os.Chown(path, uid, gid)
 }
 
+// motdPath is overridable for tests.
+var motdPath = "/etc/motd"
+
+// writeMotd appends the login banner to /etc/motd, preserving any existing
+// content (distro legal notices and the like). The rocc sshd config prints
+// the motd (PrintMotd yes) on interactive logins, so a human landing in the
+// box learns `rocc help` exists. Idempotent: skips writing when the banner
+// is already there.
+func writeMotd() error {
+	msg := fmt.Sprintf(
+		"this container is managed by rocc %s\n\n  rocc help    list commands and install recipes\n",
+		version.Version,
+	)
+	switch old, err := os.ReadFile(motdPath); {
+	case err == nil:
+		if strings.Contains(string(old), "this container is managed by rocc") {
+			return nil
+		}
+		content := string(old)
+		if !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		msg = content + "\n" + msg
+	case os.IsNotExist(err):
+		// no motd yet: banner only
+	default:
+		return err
+	}
+	return os.WriteFile(motdPath, []byte(msg), 0o644)
+}
+
 // writeSSHDConfig generates a self-contained, appliance-style config:
 // public key auth only, no passwords, root, port 22.
 func writeSSHDConfig(usePAM bool) (string, error) {
@@ -284,7 +319,7 @@ ChallengeResponseAuthentication no
 AuthorizedKeysFile .ssh/authorized_keys
 StrictModes no
 X11Forwarding no
-PrintMotd no
+PrintMotd yes
 Subsystem sftp internal-sftp
 LogLevel INFO
 `)

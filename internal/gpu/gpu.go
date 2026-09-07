@@ -36,7 +36,9 @@ func (g Info) Vendor() string {
 	}
 }
 
-// TorchIndex maps the detected hardware to a PyTorch wheel index.
+// TorchIndex maps the detected hardware to a PyTorch wheel index. This is
+// the offline fallback used when the live index cannot be read; cpu means
+// "no accelerator device nodes at all".
 func (g Info) TorchIndex() string {
 	switch g.Vendor() {
 	case "nvidia":
@@ -46,6 +48,8 @@ func (g Info) TorchIndex() string {
 			return "https://download.pytorch.org/whl/rocm6.3"
 		}
 		return "https://download.pytorch.org/whl/cpu" // rocm wheels are x86_64-only
+	case "drm":
+		return "https://download.pytorch.org/whl/xpu" // render nodes: likely intel gpu
 	default:
 		return "https://download.pytorch.org/whl/cpu"
 	}
@@ -55,7 +59,7 @@ func (g Info) TorchIndex() string {
 func (g Info) Describe() string {
 	var parts []string
 	if g.NVIDIA {
-		if v := nvidiaDriverVersion(); v != "" {
+		if v := NvidiaDriverVersion(); v != "" {
 			parts = append(parts, "nvidia (driver "+v+")")
 		} else {
 			parts = append(parts, "nvidia")
@@ -93,9 +97,9 @@ func Detect() Info {
 	return g
 }
 
-// nvidiaDriverVersion is best-effort diagnostics when nvidia-smi happens to
-// exist; it may be empty and that is fine.
-func nvidiaDriverVersion() string {
+// NvidiaDriverVersion reports the host nvidia driver via nvidia-smi when
+// available; empty means unknown and that is fine.
+func NvidiaDriverVersion() string {
 	bin, err := exec.LookPath("nvidia-smi")
 	if err != nil {
 		return ""

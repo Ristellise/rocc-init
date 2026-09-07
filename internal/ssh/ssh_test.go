@@ -3,8 +3,50 @@ package ssh
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestWriteMotd(t *testing.T) {
+	dir := t.TempDir()
+	orig := motdPath
+	defer func() { motdPath = orig }()
+
+	// fresh file: banner only
+	motdPath = filepath.Join(dir, "motd")
+	if err := writeMotd(); err != nil {
+		t.Fatalf("writeMotd: %v", err)
+	}
+	b, err := os.ReadFile(motdPath)
+	if err != nil {
+		t.Fatalf("read motd: %v", err)
+	}
+	if msg := string(b); !strings.Contains(msg, "managed by rocc") || !strings.Contains(msg, "rocc help") {
+		t.Fatalf("motd should mention rocc and rocc help, got %q", msg)
+	}
+
+	// existing content is preserved, banner appended below it
+	motdPath = filepath.Join(dir, "motd2")
+	if err := os.WriteFile(motdPath, []byte("*NOTICE* authorized access only"), 0o644); err != nil {
+		t.Fatalf("seed motd: %v", err)
+	}
+	if err := writeMotd(); err != nil {
+		t.Fatalf("writeMotd: %v", err)
+	}
+	b, _ = os.ReadFile(motdPath)
+	if msg := string(b); !strings.HasPrefix(msg, "*NOTICE* authorized access only") || !strings.Contains(msg, "rocc help") {
+		t.Fatalf("existing motd should be kept with the banner appended, got %q", msg)
+	}
+
+	// idempotent: a second write must not duplicate the banner
+	if err := writeMotd(); err != nil {
+		t.Fatalf("writeMotd: %v", err)
+	}
+	b, _ = os.ReadFile(motdPath)
+	if n := strings.Count(string(b), "managed by rocc"); n != 1 {
+		t.Fatalf("banner should appear exactly once, got %d in %q", n, string(b))
+	}
+}
 
 func TestValidPubKey(t *testing.T) {
 	good := []string{

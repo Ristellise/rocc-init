@@ -14,11 +14,12 @@ import (
 	"rocc/internal/proc"
 	"rocc/internal/ssh"
 	"rocc/internal/util"
+	"rocc/internal/version"
 )
 
 // Run is the init entry point.
-func Run(cmdArgs []string, version string) {
-	util.Logf("rocc %s starting (pid %d)", version, os.Getpid())
+func Run(cmdArgs []string) {
+	util.Logf("rocc %s starting (pid %d)", version.Version, os.Getpid())
 	if os.Getpid() != 1 {
 		util.Logf("note: not pid 1; only reaping our own children")
 	}

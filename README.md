@@ -116,11 +116,24 @@ container, and passed in via either path — discovery picks them up:
 sshd comes up **only if at least one key is discovered**, so plain
 `docker run image python train.py` stays a normal container.
 
+Interactive ssh logins get a short banner via `/etc/motd`:
+
+```
+this container is managed by rocc v0.4.0
+
+  rocc help    list commands and install recipes
+```
+
+Appended to any existing motd when sshd starts — distro notices already in
+the file are kept, never overwritten. Non-interactive sessions (`ssh host
+cmd`, rsync) print nothing extra.
+
 ## Install recipes (`rocc install ...`)
 
 - `uv` — installs the astral uv manager, symlinked to `/usr/local/bin/uv`
 - `pytorch` — installs torch (+ vision/audio) via uv into the image's
-  python3, from a **hardware-matched** wheel index
+  python3, from a **hardware-matched** wheel index discovered live from
+  https://download.pytorch.org/whl/
 - `apt:<pkgs>` / `apk:<pkgs>` / `pip:<pkgs>` — passthrough installs
 
 Flags: `--index <url>` overrides the wheel index, `--pkgs "a,b"` overrides
@@ -133,16 +146,28 @@ python base image).
 
 ## Hardware detection (by /dev only)
 
-| /dev probe            | vendor | torch wheel index                      |
-|-----------------------|--------|----------------------------------------|
-| `nvidia*` nodes       | nvidia | `https://download.pytorch.org/whl/cu126` |
-| `/dev/kfd`            | rocm   | `https://download.pytorch.org/whl/rocm6.3` (x86_64, else cpu) |
-| `/dev/dri/*` only     | drm    | `https://download.pytorch.org/whl/cpu` |
-| nothing               | cpu    | `https://download.pytorch.org/whl/cpu` |
+| /dev probe            | vendor | default variant                                      |
+|-----------------------|--------|------------------------------------------------------|
+| `nvidia*` nodes       | nvidia | newest `cuXXX` the detected driver supports (cu12x if driver unknown) |
+| `/dev/kfd`            | rocm   | newest `rocmX.Y` (x86_64)                             |
+| `/dev/dri/*` only     | drm    | `xpu` (render nodes: likely an intel gpu)            |
+| nothing               | cpu    | `cpu`                                                 |
 
-Hardware-agnostic: the same binary runs on amd64/arm64, NVIDIA/AMD/CPU hosts
-and picks the right wheels at install time. Override with `--index` if you
-need a specific CUDA build.
+`cpu` is strictly the fallback: it is only the default when no accelerator
+device nodes exist at all, or when the matched family is not in the index.
+
+The pytorch recipe does not hardcode a variant. It reads
+https://download.pytorch.org/whl/ (a plain pypi HTML index) at install time
+and preselects the hardware-matched default from the live list. On an
+interactive terminal it prints every variant — cuXXX gated by the detected
+nvidia driver, rocm x.y, xpu, cpu marked as fallback — and asks; press enter
+to take the default, or type a number/name for an expert override.
+Non-interactive runs (docker, scripts) use the default silently, and
+`--index` skips the whole thing. If the index is unreachable, an offline
+best-guess from the table above is used.
+
+Hardware-agnostic: the same binary runs on amd64/arm64, NVIDIA/AMD/Intel/CPU
+hosts and picks the right wheels at install time.
 
 ## Subcommands
 

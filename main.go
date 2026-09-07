@@ -27,11 +27,8 @@ import (
 	"rocc/internal/install"
 	"rocc/internal/ssh"
 	"rocc/internal/util"
+	"rocc/internal/version"
 )
-
-// version is stamped by the release workflow via -ldflags -X; local
-// builds say "dev".
-var version = "dev"
 
 func main() {
 	args := os.Args[1:]
@@ -42,7 +39,7 @@ func main() {
 
 	if len(args) == 0 {
 		// bare `rocc` is the init
-		boot.Run(nil, version)
+		boot.Run(nil)
 		return
 	}
 	switch args[0] {
@@ -51,7 +48,7 @@ func main() {
 		if len(cmdArgs) > 0 && cmdArgs[0] == "--" {
 			cmdArgs = cmdArgs[1:]
 		}
-		boot.Run(cmdArgs, version)
+		boot.Run(cmdArgs)
 	case "gpu":
 		printGPUReport()
 	case "keys":
@@ -70,7 +67,7 @@ func main() {
 			util.Fatalf("%v", err)
 		}
 	case "version", "--version":
-		fmt.Println("rocc " + version)
+		fmt.Println("rocc " + version.Version)
 	case "help", "-h", "--help":
 		printUsage(os.Stdout)
 	default:
@@ -142,7 +139,7 @@ func printGPUReport() {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintf(w, `rocc `+version+` - tiny PID 1 init for containers
+	fmt.Fprintf(w, `rocc `+version.Version+` - tiny PID 1 init for containers
 
 Usage:
   rocc init [cmd args...]   run as PID 1: sshd if keys are discovered, supervise cmd (default: sleep infinity)
@@ -171,7 +168,8 @@ No network fetches: pass remote keys in yourself, e.g.
 sshd listens on port 22 as root (map it with docker -p). openssh-server is
 installed automatically if missing — ssh is the one service rocc runs itself.
 
-Hardware detection probes /dev only: nvidia* -> CUDA wheels, kfd -> ROCm
-wheels (x86_64), dri/* or nothing -> CPU wheels.
+Hardware detection probes /dev only: nvidia* -> CUDA wheels (gated by the
+detected driver), kfd -> ROCm wheels (x86_64), dri/* -> XPU wheels,
+nothing -> CPU wheels. cpu is always the fallback, never the first choice.
 `)
 }

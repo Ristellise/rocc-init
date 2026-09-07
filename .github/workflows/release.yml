@@ -33,7 +33,7 @@ jobs:
           set -euo pipefail
           for arch in amd64 arm64; do
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
-              go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+              go build -trimpath -ldflags "-s -w -X rocc/internal/version.Version=${GITHUB_REF_NAME}" \
               -o "rocc_linux_${arch}" .
             sha256sum "rocc_linux_${arch}" > "rocc_linux_${arch}.sha256"
           done
