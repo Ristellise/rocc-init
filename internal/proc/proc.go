@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	spawnMu sync.Mutex // serializes child spawning against the reaper
-	tracked sync.Map   // pid -> chan int (exit-code delivery)
+	spawnMu    sync.Mutex // serializes child spawning against the reaper
+	tracked    sync.Map   // pid -> chan int (exit-code delivery)
+	reaperOnce sync.Once
 )
 
 // StartReaper reaps zombies. As PID 1, every orphaned process in the container
@@ -26,15 +27,19 @@ var (
 //
 // The reaper is the *only* waiter: every child we care about is spawned via
 // StartProc, which registers it under spawnMu before the lock is released, so
-// a fast exit can never be reaped before its channel exists.
+// a fast exit can never be reaped before its channel exists. StartProc
+// calls StartReaper too, so subcommand invocations (`rocc install ...` from
+// a shell, not as PID 1) get a reaper without anyone wiring one up.
 func StartReaper() {
-	sigCh := make(chan os.Signal, 64)
-	signal.Notify(sigCh, syscall.SIGCHLD)
-	go func() {
-		for range sigCh {
-			reapOnce()
-		}
-	}()
+	reaperOnce.Do(func() {
+		sigCh := make(chan os.Signal, 64)
+		signal.Notify(sigCh, syscall.SIGCHLD)
+		go func() {
+			for range sigCh {
+				reapOnce()
+			}
+		}()
+	})
 }
 
 // reapOnce drains all currently-dead children, handing exit codes to tracked
@@ -100,6 +105,9 @@ func SpawnDaemon(argv []string) (*Proc, error) {
 func StartProc(cmd *exec.Cmd) (*Proc, error) {
 	spawnMu.Lock()
 	defer spawnMu.Unlock()
+	// Before Start: the SIGCHLD handler must exist before the child can,
+	// or a fast exit could go unnoticed forever.
+	StartReaper()
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
