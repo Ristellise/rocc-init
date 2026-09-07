@@ -21,7 +21,7 @@ Boot sequence:
 
 ```
 rocc init (PID 1)
- ├─ probe /dev for accelerators (logged; `rocc gpu` for JSON)
+ ├─ probe /dev for accelerators (logged; `rocc gpu` to list them)
  ├─ sshd  ← keys discovered in the environment (key string or path to key file)
  └─ main  ← `rocc init` args (container CMD), or `sleep infinity`
 ```
@@ -239,7 +239,7 @@ hosts and picks the right wheels at install time.
 
 ```
 rocc init [cmd ...]  # run as PID 1: sshd if keys are found, supervise cmd (default: sleep infinity)
-rocc gpu             # detected accelerators as JSON (great for debugging --gpus)
+rocc gpu [--json]   # detected accelerators (key: value list; --json for machines)
 rocc keys            # keys discovered from the environment
 rocc install ...     # install recipes now
 rocc version

@@ -50,7 +50,11 @@ func main() {
 		}
 		boot.Run(cmdArgs)
 	case "gpu":
-		printGPUReport()
+		asJSON := len(args) == 2 && args[1] == "--json"
+		if !asJSON && len(args) > 1 {
+			util.Fatalf("unknown flag %q for gpu (only --json)", args[1])
+		}
+		printGPUReport(asJSON)
 	case "keys":
 		for _, k := range ssh.DiscoverKeys() {
 			fmt.Println(k)
@@ -114,8 +118,26 @@ func parseInstallArgs(args []string) (installArgs, error) {
 	return out, nil
 }
 
-func printGPUReport() {
+func printGPUReport(asJSON bool) {
 	g := gpu.Detect()
+	if !asJSON {
+		fmt.Printf("vendor:      %s\n", g.Vendor())
+		if g.NVIDIA {
+			if d := gpu.NvidiaDriverVersion(); d != "" {
+				fmt.Printf("driver:      %s\n", d)
+			}
+		}
+		fmt.Printf("torch index: %s\n", g.TorchIndex())
+		if len(g.Devices) == 0 {
+			fmt.Println("devices:     (none)")
+			return
+		}
+		fmt.Println("devices:")
+		for _, d := range g.Devices {
+			fmt.Printf("  %s\n", d)
+		}
+		return
+	}
 	report := struct {
 		Vendor     string   `json:"vendor"`
 		NVIDIA     bool     `json:"nvidia"`
@@ -144,7 +166,7 @@ func printUsage(w io.Writer) {
 Usage:
   rocc init [cmd args...]   run as PID 1: sshd if keys are discovered, supervise cmd (default: sleep infinity)
   rocc init -- cmd args...   same, but never interpret cmd args
-  rocc gpu                   print detected accelerators as JSON
+  rocc gpu [--json]          print detected accelerators (key: value, or JSON)
   rocc keys                  print public keys discovered in the environment
   rocc install <item>...     install recipes now
   rocc version | help
