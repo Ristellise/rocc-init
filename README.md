@@ -79,37 +79,39 @@ starts under rocc; it does not adopt rocc later.
 ### Flaky start commands (RunPod & friends)
 
 Some platforms mangle the container start command — quotes and spaces get
-eaten, or the field silently resets between restarts. The fix: carry the
-entire bootstrap in one env var and reduce the start command to a fixed
-incantation with nothing left to mangle:
+eaten, or the field silently resets between restarts. Env vars live in the
+pod spec and survive what command fields don't, so the fix is: carry the
+entire bootstrap in env vars and reduce the start command to a fixed
+incantation with nothing left to mangle.
 
-```sh
-docker run -d --name dev -p 2222:22 --gpus all \
-  -e KEYS="$(curl -fsSL https://github.com/<user>.keys)" \
-  -e ROCC='apt-get update -qq && apt-get install -y -qq curl && \
-           curl -fsSL https://github.com/Ristellise/rocc-init/releases/latest/download/rocc_linux_amd64 \
-             -o /usr/local/bin/rocc && chmod +x /usr/local/bin/rocc && \
-           exec rocc init' \
-  ubuntu:24.04 \
-  bash -c 'eval${IFS}$ROCC'
+Env vars — one key, one value, each a single line, ready to paste into
+key/value fields:
+
+| key | value |
+|-----|-------|
+| `KEYS` | your public key, e.g. `ssh-ed25519 AAAA... you@laptop` |
+| `ROCC` | `apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://github.com/Ristellise/rocc-init/releases/latest/download/rocc_linux_amd64 -o /usr/local/bin/rocc && chmod +x /usr/local/bin/rocc && exec rocc init` |
+
+Docker command:
+
+```
+bash -c eval${IFS}$ROCC
 ```
 
-- `ROCC` holds the whole bootstrap: install curl if the image lacks it,
-  fetch the binary, `exec rocc init` — the `exec` replaces bash, so rocc
-  ends up as PID 1. Trim the `apt-get` prefix on images that already ship
-  curl
+- `KEYS`: any name works — discovery is by value; a path to a key file
+  works too
+- `ROCC`: trim the `apt-get` prefix on images that already ship curl; to run
+  something besides the ssh appliance, append a workload:
+  `... && exec rocc init -- <cmd args...>`
 - `eval${IFS}$ROCC` works because `${IFS}` (the shell's field separator)
   expands to a space at eval time — the command token needs no quotes and
   no literal space, so a flaky command parser has nothing to eat. If the
   platform pre-evaluates the command through a shell, escape both
-  expansions: `bash -c eval\${IFS}\$ROCC`
+  expansions: `bash -c eval\${IFS}\$ROCC`; if it passes commands through
+  verbatim, quotes work too: `bash -c 'eval${IFS}$ROCC'`
+- the `exec` in `ROCC` replaces bash, so rocc ends up as PID 1
 - `ROCC` is read by bash, never by rocc — a launcher convention like
   `KEYS`, not a rocc setting
-- env vars live in the pod spec and tend to survive what command fields
-  don't; on RunPod: put the string in `ROCC` under the pod's env vars, and
-  the Docker command field becomes just `bash -c eval${IFS}$ROCC`
-- append a workload to the var to run something besides the ssh appliance:
-  `... && exec rocc init -- <cmd args...>`
 
 ### When the command field behaves
 
