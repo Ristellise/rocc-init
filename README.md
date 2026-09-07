@@ -65,6 +65,70 @@ rocc install apt:htop,curl
 
 `rocc install pytorch` installs uv first if it is not there yet.
 
+## Running custom containers
+
+rocc works with any image and any start command. Nothing is injected into
+the image — there is no `rocc inject`, no build step, no required base. The
+image stays stock; rocc is fetched (or copied in — see the Dockerfile
+snippet under [Releasing](#releasing)) at container start.
+
+The flip side: rocc cannot be attached to a container that is already
+running. PID 1 is the job — reaping, signals, supervision — so a container
+starts under rocc; it does not adopt rocc later.
+
+### Flaky start commands (RunPod & friends)
+
+Some platforms mangle the container start command — quotes and spaces get
+eaten, or the field silently resets between restarts. The fix: carry the
+entire bootstrap in one env var and reduce the start command to a fixed
+incantation with nothing left to mangle:
+
+```sh
+docker run -d --name dev -p 2222:22 --gpus all \
+  -e KEYS="$(curl -fsSL https://github.com/<user>.keys)" \
+  -e ROCC='apt-get update -qq && apt-get install -y -qq curl && \
+           curl -fsSL https://github.com/Ristellise/rocc-init/releases/latest/download/rocc_linux_amd64 \
+             -o /usr/local/bin/rocc && chmod +x /usr/local/bin/rocc && \
+           exec rocc init' \
+  ubuntu:24.04 \
+  bash -c 'eval${IFS}$ROCC'
+```
+
+- `ROCC` holds the whole bootstrap: install curl if the image lacks it,
+  fetch the binary, `exec rocc init` — the `exec` replaces bash, so rocc
+  ends up as PID 1. Trim the `apt-get` prefix on images that already ship
+  curl
+- `eval${IFS}$ROCC` works because `${IFS}` (the shell's field separator)
+  expands to a space at eval time — the command token needs no quotes and
+  no literal space, so a flaky command parser has nothing to eat. If the
+  platform pre-evaluates the command through a shell, escape both
+  expansions: `bash -c eval\${IFS}\$ROCC`
+- `ROCC` is read by bash, never by rocc — a launcher convention like
+  `KEYS`, not a rocc setting
+- env vars live in the pod spec and tend to survive what command fields
+  don't; on RunPod: put the string in `ROCC` under the pod's env vars, and
+  the Docker command field becomes just `bash -c eval${IFS}$ROCC`
+- append a workload to the var to run something besides the ssh appliance:
+  `... && exec rocc init -- <cmd args...>`
+
+### When the command field behaves
+
+Everything after `init --` is the main process, supervised under PID 1.
+
+- `SIGTERM`/`SIGINT` are forwarded (10s grace, then `SIGKILL`); the
+  container exits with the workload's exit code — no idle appliance after
+  the run finishes
+- `--` separates rocc's arguments from the workload's flags; `rocc init
+  <cmd args...>` without the separator works too
+- installs compose into the start command the same way:
+  `rocc init -- bash -c 'rocc install pytorch && <cmd>'` — nothing runs at
+  boot you didn't ask for, and a failed install fails the run immediately
+  instead of bricking a boot
+- sshd still comes up alongside whenever keys are discovered — ssh in to
+  watch a live run while the workload keeps running
+- with no start command at all, `rocc init` supervises `sleep infinity` —
+  the ssh appliance from the quick start
+
 ## Releasing
 
 Tag a commit and push the tag; the [release workflow](.github/workflows/release.yml)
@@ -84,7 +148,7 @@ FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 COPY rocc /usr/local/bin/rocc
 ENTRYPOINT ["/usr/local/bin/rocc", "init"]
-# CMD ["python", "train.py"]   # optional: supervised under PID 1
+# CMD ["jupyter", "lab"]   # optional: runs supervised under PID 1
 ```
 
 ## Key discovery: two paths, by value
@@ -113,8 +177,8 @@ container, and passed in via either path — discovery picks them up:
 -e KEYS="$(curl -fsSL https://github.com/<user>.keys)"
 ```
 
-sshd comes up **only if at least one key is discovered**, so plain
-`docker run image python train.py` stays a normal container.
+sshd comes up **only if at least one key is discovered**, so `docker run
+image <cmd>` with no keys in the environment stays a normal container.
 
 Interactive ssh logins get a short banner via `/etc/motd`:
 
