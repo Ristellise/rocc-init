@@ -61,11 +61,8 @@ rocc install apt:htop,curl
 
 ## Running custom containers
 
-rocc works with any image and any start command. Nothing is injected: no
-build step, no required base — the image stays stock and rocc is fetched
-(or copied in; see the Dockerfile under [Releasing](#releasing)) at start.
-The flip side: rocc has to be the container's first process; it cannot be
-attached to a container that is already running.
+rocc works with any image and any start command. Nothing is injected into
+the image; rocc just has to be the container's first process.
 
 ### Flaky start commands (RunPod & friends)
 
@@ -164,9 +161,8 @@ this container is managed by rocc v0.4.0
   rocc help    list commands and install recipes
 ```
 
-Appended to any existing motd when sshd starts — distro notices already in
-the file are kept, never overwritten. Non-interactive sessions (`ssh host
-cmd`, rsync) print nothing extra.
+Appended to the existing motd when sshd starts; non-interactive sessions
+print nothing.
 
 ## Install recipes (`rocc install ...`)
 
@@ -179,10 +175,8 @@ cmd`, rsync) print nothing extra.
 Flags: `--index <url>` overrides the wheel index, `--pkgs "a,b"` overrides
 the package set.
 
-The pytorch recipe installs into an interpreter that already exists in the
-image — it never downloads a python of its own. On a bare image, compose
-one in first: `rocc install apt:python3 && rocc install pytorch` (or use a
-python base image).
+The recipe never downloads a python of its own; on a bare image compose one
+in first: `rocc install apt:python3 && rocc install pytorch`.
 
 ## Hardware detection (by /dev only)
 
@@ -196,13 +190,10 @@ python base image).
 `cpu` is strictly the fallback: it is only the default when no accelerator
 device nodes exist at all, or when the matched family is not in the index.
 
-The pytorch recipe reads the index live at install time instead of
-hardcoding a variant, and verifies the candidate ships wheels for this
-platform and python before preselecting it (the index has partial dirs —
-rocm7.14 has no cp312 x86_64 torchaudio), walking older until one does.
+The pytorch recipe reads the live index and picks the newest variant whose
+wheels resolve for this platform and python, walking older until they do.
 Interactively it offers the newest few builds plus the cpu fallback and
-asks; `--index` overrides. If the index is unreachable, the table above
-is the offline guess.
+asks. If the index is unreachable, the table above is the offline guess.
 
 ## Subcommands
 
